@@ -1,4 +1,4 @@
-# 💰 Cash Report - Target Wise Daily Achievement
+# Cash Report - Target Wise Daily Achievement
 
 This project generates a **Cash Deposit Target Report** by comparing daily achieved amounts with predefined targets for each ASM.
 
