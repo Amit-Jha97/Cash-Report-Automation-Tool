@@ -8,7 +8,7 @@ from openpyxl.utils import get_column_letter
 # Hide tkinter window
 Tk().withdraw()
 
-
+# Select Export File
 export_file = filedialog.askopenfilename(title="Select Export Excel File (sheet name 'Table')")
 if not export_file:
     print("❌ Export file not selected.")
@@ -21,11 +21,11 @@ if not mapping_file:
     exit()
 
 try:
-    #  Read sheets
+   
     export_df = pd.read_excel(export_file, sheet_name="Table")
     mapping_df = pd.read_excel(mapping_file, sheet_name="MAPPING")
 
-  
+    # Data preprocessing
     export_df['deposit_date'] = pd.to_datetime(export_df['deposit_date'], errors='coerce')
     export_df = export_df.dropna(subset=['deposit_date'])
     export_df['only_date'] = export_df['deposit_date'].dt.date
@@ -33,121 +33,164 @@ try:
     export_df['type'] = export_df['type'].astype(str).str.strip().str.lower()
     export_df['status'] = export_df['status'].astype(str).str.strip().str.lower()
 
-  
+    # Find the latest date
     latest_date = export_df['only_date'].max()
     print("🗓️ Latest Date:", latest_date)
 
-  
+    # Filter export data
     filtered_export = export_df[
         (export_df['only_date'] == latest_date) &
         (export_df['type'].isin(['card', 'cash'])) &
         (export_df['status'] == 'accepted')
     ]
 
-    #  Merge with mapping for latest amount data
+    
     merged = pd.merge(filtered_export, mapping_df, on='code', how='inner')
 
-    
     mapping_df = mapping_df[mapping_df['target'].fillna(0) != 0]
 
-   
-    grouped_amount = (
+    
+    grouped_amount_asm = (
         merged.groupby('asmname', as_index=False)['amount'].sum()
         .rename(columns={'asmname': 'ASM Name', 'amount': 'Amount'})
     )
 
-    
-    unique_target = (
+   
+    unique_target_asm = (
         mapping_df.drop_duplicates(subset='asmname')[['asmname', 'target']]
         .rename(columns={'asmname': 'ASM Name', 'target': 'Target'})
     )
 
-    
-    final = pd.merge(unique_target, grouped_amount, on='ASM Name', how='left')
-    final['Amount'] = final['Amount'].fillna(0)
-
-
-    final['% Achievement'] = final.apply(
+    final_asm = pd.merge(unique_target_asm, grouped_amount_asm, on='ASM Name', how='left')
+    final_asm['Amount'] = final_asm['Amount'].fillna(0)
+    final_asm['% Achievement'] = final_asm.apply(
         lambda row: (row['Amount'] / row['Target']) if row['Target'] != 0 else 0, axis=1
     )
 
-    
-    total_target = final['Target'].sum()
-    total_amount = final['Amount'].sum()
-    total_achieved = (total_amount / total_target) if total_target != 0 else 0
-
-    total_row = {
+    # Calculate total for ASM sheet
+    total_target_asm = final_asm['Target'].sum()
+    total_amount_asm = final_asm['Amount'].sum()
+    total_achieved_asm = (total_amount_asm / total_target_asm) if total_target_asm != 0 else 0
+    total_row_asm = {
         'ASM Name': 'TOTAL',
-        'Target': total_target,
-        'Amount': total_amount,
-        '% Achievement': total_achieved
+        'Target': total_target_asm,
+        'Amount': total_amount_asm,
+        '% Achievement': total_achieved_asm
     }
+    final_asm.loc[len(final_asm)] = total_row_asm
+    data_only_asm = final_asm[final_asm['ASM Name'] != 'TOTAL'].sort_values(by='% Achievement', ascending=False)
+    final_asm = pd.concat([data_only_asm, final_asm[final_asm['ASM Name'] == 'TOTAL']], ignore_index=True)
+    final_asm['ASM Name'] = final_asm['ASM Name'].astype(str).str.title()
 
-    final.loc[len(final)] = total_row
-
-    
-    data_only = final[final['ASM Name'] != 'TOTAL'].sort_values(by='% Achievement', ascending=False)
-    final = pd.concat([data_only, final[final['ASM Name'] == 'TOTAL']], ignore_index=True)
-
-
-    final['ASM Name'] = final['ASM Name'].astype(str).str.title()
-
-   
-    output_path = os.path.join(os.path.dirname(export_file), "Cash_Report.xlsx")
-    final.to_excel(output_path, index=False, startrow=1)
-
- 
-    wb = load_workbook(output_path)
-    ws = wb.active
-
-    chocolate_fill = PatternFill(start_color="7B3F00", end_color="7B3F00", fill_type="solid")
-    white_font = Font(color="FFFFFF", bold=True)
-    thin_border = Border(
-        left=Side(style='thin'), right=Side(style='thin'),
-        top=Side(style='thin'), bottom=Side(style='thin')
+    # Calculate and prepare data for HEAD sheet
+    grouped_amount_head = (
+        merged.groupby('head', as_index=False)['amount'].sum()
+        .rename(columns={'head': 'Head', 'amount': 'Amount'})
     )
 
-    # Header style
-    for cell in ws[2]:
-        cell.fill = chocolate_fill
-        cell.font = white_font
+    # REVISED LOGIC: Pick the unique target value for each ASM and then sum by Head
+    unique_asm_targets = mapping_df.drop_duplicates(subset='asmname')[['asmname', 'target']]
+    head_asm_map = mapping_df.drop_duplicates(subset='asmname')[['head', 'asmname']]
+    merged_targets = pd.merge(head_asm_map, unique_asm_targets, on='asmname', how='inner')
+    unique_target_head = (
+        merged_targets.groupby('head', as_index=False)['target'].sum()
+        .rename(columns={'head': 'Head', 'target': 'Target'})
+    )
+    
+    final_head = pd.merge(unique_target_head, grouped_amount_head, on='Head', how='left')
+    final_head['Amount'] = final_head['Amount'].fillna(0)
+    final_head['% Achievement'] = final_head.apply(
+        lambda row: (row['Amount'] / row['Target']) if row['Target'] != 0 else 0, axis=1
+    )
+
+    # Calculate total for HEAD sheet
+    total_target_head = final_head['Target'].sum()
+    total_amount_head = final_head['Amount'].sum()
+    total_achieved_head = (total_amount_head / total_target_head) if total_target_head != 0 else 0
+    total_row_head = {
+        'Head': 'TOTAL',
+        'Target': total_target_head,
+        'Amount': total_amount_head,
+        '% Achievement': total_achieved_head
+    }
+    final_head.loc[len(final_head)] = total_row_head
+    data_only_head = final_head[final_head['Head'] != 'TOTAL'].sort_values(by='% Achievement', ascending=False)
+    final_head = pd.concat([data_only_head, final_head[final_head['Head'] == 'TOTAL']], ignore_index=True)
+    final_head['Head'] = final_head['Head'].astype(str).str.title()
+
+    # Create a Pandas Excel writer object to write to multiple sheets
+    output_path = os.path.join(os.path.dirname(export_file), "Cash_Report.xlsx")
+    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        final_asm.to_excel(writer, sheet_name='ASM Report', index=False, startrow=1)
+        final_head.to_excel(writer, sheet_name='Head Report', index=False, startrow=1)
 
     
-    total_row_idx = ws.max_row
-    for cell in ws[total_row_idx]:
-        cell.fill = chocolate_fill
-        cell.font = white_font
-
-   
-    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
-        for cell in row:
-            cell.border = thin_border
+    wb = load_workbook(output_path)
 
     
-    for row in ws.iter_rows(min_row=3, max_row=ws.max_row, min_col=4, max_col=4):
-        for cell in row:
-            cell.number_format = '0%'
+    def style_sheet(ws, title_text, name_col):
+        # Define styles
+        chocolate_fill = PatternFill(start_color="7B3F00", end_color="7B3F00", fill_type="solid")
+        dark_blue_fill = PatternFill(start_color="00008B", end_color="00008B", fill_type="solid")
+        white_font = Font(color="FFFFFF", bold=True)
+        thin_border = Border(
+            left=Side(style='thin'), right=Side(style='thin'),
+            top=Side(style='thin'), bottom=Side(style='thin')
+        )
+        
+        # Title styling
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ws.max_column)
+        title_cell = ws.cell(row=1, column=1)
+        title_cell.value = title_text
+        title_cell.fill = dark_blue_fill
+        title_cell.font = white_font
+        title_cell.alignment = Alignment(horizontal='center', vertical='center')
 
+        # Header style
+        for cell in ws[2]:
+            cell.fill = chocolate_fill
+            cell.font = white_font
+
+        # Total row style
+        total_row_idx = ws.max_row
+        for cell in ws[total_row_idx]:
+            cell.fill = chocolate_fill
+            cell.font = white_font
+
+       
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            for cell in row:
+                cell.border = thin_border
+
+        # Percentage format
+        for row in ws.iter_rows(min_row=3, max_row=ws.max_row, min_col=4, max_col=4):
+            for cell in row:
+                cell.number_format = '0%'
+        
+        # Apply Indian comma format to Target and Amount columns
+        indian_format = '[>=10000000]##\,##\,##\,##0;[>=100000]##\,##\,##0;#,##0'
+        for col_idx in [2, 3]: 
+            for row in ws.iter_rows(min_row=3, max_row=ws.max_row, min_col=col_idx, max_col=col_idx):
+                for cell in row:
+                    cell.number_format = indian_format
+
+        # Column width adjustment
+        for col_idx, col_cells in enumerate(ws.iter_cols(min_row=3, max_row=ws.max_row), start=1):
+            max_length = max(len(str(cell.value)) if cell.value else 0 for cell in col_cells)
+            col_letter = get_column_letter(col_idx)
+            
+            if col_letter == 'A':
+                ws.column_dimensions[col_letter].width = min(max_length + 2, 25)
+            elif col_letter == 'D':
+                ws.column_dimensions[col_letter].width = min(max_length + 2, 14)
+            else:
+                ws.column_dimensions[col_letter].width = max_length + 2
+
+    # Style both sheets
+    style_sheet(wb['ASM Report'], "CASH DEPOSIT TARGET (BY ASM)", 'ASM Name')
+    style_sheet(wb['Head Report'], "CASH DEPOSIT TARGET (BY HEAD)", 'Head')
     
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
-    title_cell = ws.cell(row=1, column=1)
-    title_cell.value = "CASH DEPOSIT TARGET"
-    title_cell.fill = PatternFill(start_color="00008B", end_color="00008B", fill_type="solid")
-    title_cell.font = Font(color="FFFFFF", bold=True)
-    title_cell.alignment = Alignment(horizontal='center', vertical='center')
-
-   
-    for col_idx, col_cells in enumerate(ws.iter_cols(min_row=3, max_row=ws.max_row), start=1):
-        max_length = max(len(str(cell.value)) if cell.value else 0 for cell in col_cells)
-        col_letter = get_column_letter(col_idx)
-
-        if col_letter == 'A':
-            ws.column_dimensions[col_letter].width = min(max_length + 2, 25)
-        elif col_letter == 'D':
-            ws.column_dimensions[col_letter].width = min(max_length + 2, 14)
-        else:
-            ws.column_dimensions[col_letter].width = max_length + 2
-
+    # Save the final workbook
     wb.save(output_path)
     print("✅ Final Report saved at:", output_path)
 
